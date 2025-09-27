@@ -154,17 +154,55 @@ class PaddleEngine(OcrEngine):
 
         # 运行 OCR（单张图）
         # 返回结构：list[ page -> list[ (boxPts, (text, score)) ] ]
-        ocr_out = engine.ocr(img, cls=True)
+                # 运行 OCR（单张图）
+        try:
+            ocr_out = engine.ocr(img, cls=True)
+        except Exception:
+            return {"text": "", "boxes": [] if return_boxes else None}
 
         lines: List[str] = []
         boxes: List[Box] = []
 
+        # ——健壮解析：容忍 None / 空页 / 非预期结构——
+        if not ocr_out:
+            return {"text": "", "boxes": [] if return_boxes else None}
+
         for page in ocr_out:
-            for item in page:
-                box_pts, (text, score) = item
-                lines.append(text)
-                if return_boxes:
-                    xyxy = _quad_to_xyxy(box_pts)
-                    boxes.append({"text": text, "bbox": xyxy, "confidence": float(score)})
+            if not page:
+                # 可能是 None 或 []
+                continue
+            for item in (page or []):
+                # 期望 item = [box_pts, (text, score)]
+                if not item or len(item) < 2:
+                    continue
+                box_pts, info = item[0], item[1]
+
+                # 解析 (text, score)
+                text, score = "", 0.0
+                if isinstance(info, (list, tuple)) and len(info) >= 2:
+                    text = str(info[0]) if info[0] is not None else ""
+                    try:
+                        score = float(info[1])
+                    except Exception:
+                        score = 0.0
+                else:
+                    # 结构异常时跳过
+                    continue
+
+                if text:
+                    lines.append(text)
+
+                if return_boxes and box_pts is not None:
+                    try:
+                        xyxy = _quad_to_xyxy(box_pts)
+                        boxes.append({
+                            "text": text,
+                            "bbox": xyxy,
+                            "confidence": float(score),
+                        })
+                    except Exception:
+                        # 坐标异常就跳过该框
+                        pass
 
         return {"text": "\n".join(lines), "boxes": boxes if return_boxes else None}
+

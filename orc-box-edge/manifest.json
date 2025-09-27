@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "OCR Box (CaptureVisibleTab → FastAPI)",
+  "version": "1.0.0",
+  "description": "Alt+0：像微信截图，四周暗化，中间透明；后台 captureVisibleTab 截图并上传到本地 FastAPI OCR。",
+  "minimum_edge_version": "79",
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "storage"
+  ],
+
+  "host_permissions": [
+    "<all_urls>",
+    "http://10.63.191.152:8000/*"
+  ],
+
+  "background": {
+    "service_worker": "sw.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "action": {
+    "default_title": "OCR Box"
+  }
+}

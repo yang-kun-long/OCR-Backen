@@ -6,7 +6,7 @@ from pydantic import BaseModel, HttpUrl
 
 from .deps import get_engine
 from .ocr.base import OcrEngine, OcrResult
-
+import traceback
 import httpx
 
 app = FastAPI(title="OCR Demo API", version="0.2.0")
@@ -144,6 +144,7 @@ async def ocr(
         return result
     except Exception as e:
         # 避免把完整堆栈暴露给客户端
+        traceback.print_exc()
         raise HTTPException(500, f"ocr failed: {e!s}")
 
 @app.post("/v1/ocr/submit")
