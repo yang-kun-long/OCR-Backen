@@ -1,5 +1,5 @@
 # ocr_demo/ocr/paddle_impl.py
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Any
 import numpy as np
 import cv2
 
@@ -32,6 +32,7 @@ class PaddleEngine(OcrEngine):
     - 默认实例化一个中文模型
     - 按需缓存其它语言实例，避免反复下载/初始化
     - 增强：更敏感的字符集、放宽 drop_score、可选图像预处理
+    - 新增：preview_preprocess / recognize 的调试出图能力
     """
 
     def __init__(
@@ -97,7 +98,7 @@ class PaddleEngine(OcrEngine):
             self._engines[lang_key] = self._build_engine(lang_key)
         return self._engines[lang_key]
 
-    # -------- 轻量图像预处理：让细小符号更清晰（可关闭） --------
+    # -------------------- 轻量图像预处理（与识别流程同款） --------------------
     def _preprocess(self, img: np.ndarray) -> np.ndarray:
         """
         预处理策略：
@@ -112,7 +113,7 @@ class PaddleEngine(OcrEngine):
             # 1) 提升到目标高度（不过度放大，<=3x）
             target_h = 48
             scale = target_h / max(1, h)
-            if scale > 1.0 and scale <= 3.0:
+            if 1.0 < scale <= 3.0:
                 img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
 
             # 2) 灰度 & 去噪
@@ -137,7 +138,32 @@ class PaddleEngine(OcrEngine):
             # 任意错误则退回原图，避免影响主流程
             return img
 
-    def recognize(self, image_bytes: bytes, lang: str = "auto", return_boxes: bool = False) -> OcrResult:
+    # === 新增：给外部脚本/测试用的“预处理预览”钩子 ===
+    def preview_preprocess(self, img_bgr: np.ndarray) -> np.ndarray:
+        """
+        返回与识别流程一致的预处理结果（仅展示用，不做识别）
+        - 如果未开启 enable_preprocess，则直接返回原图
+        """
+        if not self._enable_preprocess:
+            return img_bgr
+        return self._preprocess(img_bgr)
+
+    # ------------------------------ 识别主流程 ------------------------------
+    def recognize(
+        self,
+        image_bytes: bytes,
+        lang: str = "auto",
+        return_boxes: bool = False,
+        # 调试/展示用：可选把预处理图落盘，或随结果返回
+        dump_preprocess_path: Optional[str] = None,
+        return_preprocessed: bool = False,
+    ) -> OcrResult:
+        """
+        兼容旧接口：默认只返回 {text, boxes?}
+        - 若提供 dump_preprocess_path，则将预处理图写入该路径（PNG）
+        - 若 return_preprocessed=True，则在结果中额外返回 'preprocessed'（BGR np.ndarray）
+          （注意：默认 False，避免改变线上返回结构）
+        """
         # 解析语言
         lang_key = _LANG_MAP.get(lang, "ch")
         engine = self._get_engine(lang_key)
@@ -149,27 +175,44 @@ class PaddleEngine(OcrEngine):
             raise ValueError("Failed to decode image bytes. Unsupported or corrupted image data.")
 
         # 预处理（可选）
+        pre_img = None
         if self._enable_preprocess:
-            img = self._preprocess(img)
+            pre_img = self._preprocess(img)
+            run_img = pre_img
+        else:
+            run_img = img
+
+        # 可选：把预处理图落盘（仅调试/出图）
+        if dump_preprocess_path and pre_img is not None:
+            try:
+                cv2.imwrite(dump_preprocess_path, pre_img)
+            except Exception:
+                # 出图失败不影响识别
+                pass
 
         # 运行 OCR（单张图）
-        # 返回结构：list[ page -> list[ (boxPts, (text, score)) ] ]
-                # 运行 OCR（单张图）
         try:
-            ocr_out = engine.ocr(img, cls=True)
+            # 返回结构：list[ page -> list[ (boxPts, (text, score)) ] ]
+            ocr_out = engine.ocr(run_img, cls=True)
         except Exception:
-            return {"text": "", "boxes": [] if return_boxes else None}
+            # 识别失败时，保持接口健壮性
+            result: OcrResult = {"text": "", "boxes": [] if return_boxes else None}
+            if return_preprocessed and pre_img is not None:
+                result["preprocessed"] = pre_img
+            return result
 
         lines: List[str] = []
         boxes: List[Box] = []
 
         # ——健壮解析：容忍 None / 空页 / 非预期结构——
         if not ocr_out:
-            return {"text": "", "boxes": [] if return_boxes else None}
+            result: OcrResult = {"text": "", "boxes": [] if return_boxes else None}
+            if return_preprocessed and pre_img is not None:
+                result["preprocessed"] = pre_img
+            return result
 
         for page in ocr_out:
             if not page:
-                # 可能是 None 或 []
                 continue
             for item in (page or []):
                 # 期望 item = [box_pts, (text, score)]
@@ -204,5 +247,7 @@ class PaddleEngine(OcrEngine):
                         # 坐标异常就跳过该框
                         pass
 
-        return {"text": "\n".join(lines), "boxes": boxes if return_boxes else None}
-
+        result: OcrResult = {"text": "\n".join(lines), "boxes": boxes if return_boxes else None}
+        if return_preprocessed and pre_img is not None:
+            result["preprocessed"] = pre_img  # 仅调试用，默认不返回
+        return result

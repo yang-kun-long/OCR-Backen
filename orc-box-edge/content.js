@@ -29,46 +29,180 @@
     setTimeout(() => d.remove(), 2200);
   };
 
+  // ===== 美化后的结果窗，增大字体 + 复制按钮 =====
+  // ===== 彩色玻璃感结果窗：浅色默认 + 主题切换 + 复制 =====
   const showResult = (text) => {
-    const w = document.createElement("div");
-    Object.assign(w.style, {
+    // 注入一次性样式（仅含动画）
+    (function ensureStyles() {
+      if (document.getElementById("ocr-result-styles")) return;
+      const style = document.createElement("style");
+      style.id = "ocr-result-styles";
+      style.textContent = `
+        @keyframes ocrPop {
+          0% { transform: translateY(8px) scale(.98); opacity: 0; }
+          100% { transform: translateY(0) scale(1); opacity: 1; }
+        }
+      `;
+      document.head.appendChild(style);
+    })();
+
+    // 渐变描边外壳
+    const shell = document.createElement("div");
+    Object.assign(shell.style, {
       position: "fixed",
       right: "16px",
       bottom: "16px",
       zIndex: 2147483647,
-      width: "min(520px,60vw)",
-      height: "min(280px,40vh)",
-      background: "#111",
-      color: "#fff",
-      borderRadius: "10px",
-      boxShadow: "0 10px 30px rgba(0,0,0,.35)",
+      padding: "1px",
+      borderRadius: "14px",
+      background: "linear-gradient(135deg,#a78bfa 0%,#60a5fa 50%,#34d399 100%)",
+      boxShadow: "0 16px 50px rgba(0,0,0,.18)",
+      animation: "ocrPop .18s ease-out"
+    });
+
+    // 主容器（默认浅色）
+    const w = document.createElement("div");
+    w.setAttribute("data-ocr", "result");
+    w.setAttribute("data-theme", "light"); // 默认浅色，可切换为 dark
+    Object.assign(w.style, {
+      width: "min(620px,62vw)",
+      height: "min(360px,46vh)",
+      borderRadius: "13px",
       overflow: "hidden",
       display: "grid",
-      gridTemplateRows: "36px 1fr"
+      gridTemplateRows: "48px 1fr",
+      background: "rgba(255,255,255,.92)",
+      backdropFilter: "saturate(140%) blur(6px)",
+      border: "1px solid rgba(0,0,0,.06)",
+      color: "#0b1220"
     });
-    const b = document.createElement("div");
-    b.textContent = "OCR 结果（点击此栏关闭 / ESC）";
-    Object.assign(b.style, { padding: "8px 12px", background: "#222", fontSize: "12px" });
+
+    // 根据主题切换颜色
+    const applyTheme = () => {
+      const dark = w.getAttribute("data-theme") === "dark";
+      w.style.background = dark ? "rgba(24,26,33,.82)" : "rgba(255,255,255,.92)";
+      w.style.border = dark ? "1px solid rgba(255,255,255,.06)" : "1px solid rgba(0,0,0,.06)";
+      w.style.color = dark ? "#f3f4f6" : "#0b1220";
+      bar.style.background = dark
+        ? "linear-gradient(180deg,rgba(47,49,57,.95),rgba(36,38,45,.95))"
+        : "linear-gradient(180deg,rgba(248,250,252,.95),rgba(241,245,249,.95))";
+      title.style.color = dark ? "rgba(255,255,255,.9)" : "rgba(15,23,42,.9)";
+      ta.style.background = dark ? "rgba(16,18,24,.55)" : "rgba(255,255,255,.7)";
+      ta.style.color = dark ? "#eaeef7" : "#0b1220";
+      ta.style.border = dark ? "1px solid rgba(255,255,255,.10)" : "1px solid rgba(0,0,0,.06)";
+      copyBtn.style.borderColor = dark ? "rgba(255,255,255,.12)" : "rgba(0,0,0,.12)";
+      themeBtn.style.borderColor = copyBtn.style.borderColor;
+    };
+
+    // 顶栏：标题 + 操作
+    const bar = document.createElement("div");
+    Object.assign(bar.style, {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      padding: "0 10px 0 14px",
+      borderBottom: "1px solid rgba(0,0,0,.06)",
+      userSelect: "none",
+      cursor: "pointer"
+    });
+    const title = document.createElement("div");
+    title.textContent = "OCR 结果（点击此栏关闭 / ESC）";
+    Object.assign(title.style, { fontSize: "12px", letterSpacing: ".2px" });
+
+    const ops = document.createElement("div");
+    Object.assign(ops.style, { display: "flex", alignItems: "center", gap: "8px", cursor: "default" });
+
+    const mkBtn = (label) => {
+      const btn = document.createElement("button");
+      btn.textContent = label;
+      Object.assign(btn.style, {
+        height: "30px",
+        padding: "0 10px",
+        borderRadius: "9px",
+        border: "1px solid rgba(0,0,0,.12)",
+        background: "rgba(255,255,255,.35)",
+        fontSize: "12px",
+        color: "inherit",
+        letterSpacing: ".2px",
+        cursor: "pointer",
+        transition: "transform .06s ease, background .2s ease, border-color .2s ease, opacity .2s",
+        backdropFilter: "blur(2px)"
+      });
+      btn.onmouseenter = () => { btn.style.opacity = "0.9"; };
+      btn.onmouseleave = () => { btn.style.opacity = "1"; };
+      btn.onmousedown = () => { btn.style.transform = "scale(.98)"; };
+      btn.onmouseup = () => { btn.style.transform = "scale(1)"; };
+      return btn;
+    };
+
+    // 复制
+    const copyBtn = mkBtn("复制");
+    // 主题切换
+    const themeBtn = mkBtn("浅/深");
+    themeBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const cur = w.getAttribute("data-theme");
+      w.setAttribute("data-theme", cur === "light" ? "dark" : "light");
+      applyTheme();
+    });
+
+    copyBtn.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(ta.value);
+        } else {
+          ta.focus(); ta.select(); document.execCommand("copy"); ta.setSelectionRange(0, 0); ta.blur();
+        }
+        copyBtn.textContent = "已复制 ✓";
+        copyBtn.style.borderColor = "rgba(16,185,129,.7)";
+        setTimeout(() => { copyBtn.textContent = "复制"; applyTheme(); }, 1200);
+      } catch {
+        copyBtn.textContent = "复制失败";
+        copyBtn.style.borderColor = "rgba(239,68,68,.7)";
+        setTimeout(() => { copyBtn.textContent = "复制"; applyTheme(); }, 1200);
+      }
+    });
+
+    ops.append(copyBtn, themeBtn);
+    bar.append(title, ops);
+
+    // 文本区域（更大字体 + 柔和背景）
     const ta = document.createElement("textarea");
     ta.readOnly = true;
     ta.value = text;
     Object.assign(ta.style, {
       width: "100%",
       height: "100%",
-      padding: "10px",
-      border: "0",
-      background: "transparent",
-      color: "#fff",
+      padding: "16px",
+      border: "1px solid rgba(0,0,0,.06)",
+      borderRadius: "10px",
+      margin: "10px",
+      outline: "none",
+      background: "rgba(255,255,255,.7)",
+      color: "#0b1220",
       fontFamily: "ui-monospace,Menlo,Consolas,monospace",
-      fontSize: "12px"
+      fontSize: "15px",
+      lineHeight: "1.65",
+      whiteSpace: "pre-wrap",
+      resize: "both",
+      minWidth: "340px",
+      minHeight: "180px",
+      boxShadow: "inset 0 1px 2px rgba(0,0,0,.06)"
     });
-    w.append(b, ta);
-    document.body.appendChild(w);
-    const close = () => w.remove();
-    b.onclick = close;
+
+    const close = () => shell.remove();
+    bar.onclick = close;
     function onEsc(e) { if (e.key === "Escape") { close(); window.removeEventListener("keydown", onEsc); } }
     window.addEventListener("keydown", onEsc);
+
+    w.append(bar, ta);
+    shell.appendChild(w);
+    document.body.appendChild(shell);
+    applyTheme(); // 按当前主题渲染
   };
+
+
 
   // ===== 关键：为“fixed 选框”做 transform/zoom 矫正 =====
   function applyViewportCorrection(overlay) {
